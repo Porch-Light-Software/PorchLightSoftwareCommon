@@ -99,7 +99,7 @@ jobs:
             --device-id="${{ steps.sim.outputs.simulator_id }}" \
             --dart-define=SCREENSHOTS_DIR="${{ github.workspace }}/screenshots/${{ matrix.label }}" \
             || true  # Don't fail the job if some screens aren't found
-        timeout-minutes: 10
+        timeout-minutes: 20
 
       - name: Capture simulator screenshots via xcrun (fallback)
         run: |

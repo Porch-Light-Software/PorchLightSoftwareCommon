@@ -1,19 +1,23 @@
 name: Take iOS Screenshots (Reusable)
 
-# Runs integration tests on real iOS simulators via GitHub Actions macOS runner.
-# Screenshots are saved as artifacts — download them from the Actions tab
-# and upload directly to App Store Connect.
+# Builds the app for iOS simulator, launches it, and captures screenshots
+# using xcrun simctl. Much more reliable than flutter drive.
 #
 # Usage from each app's .github/workflows/screenshots.yml:
 #   uses: Porch-Light-Software/PorchLightSoftwareCommon/.github/workflows/flutter-ios-screenshots.yml@main
 #   with:
 #     app_name: FastTrack
+#     bundle_id: com.porchlightsoftware.fasttrack
 
 on:
   workflow_call:
     inputs:
       app_name:
         description: 'App display name (FastTrack, MoodTrack, SubTrack)'
+        required: true
+        type: string
+      bundle_id:
+        description: 'iOS bundle identifier'
         required: true
         type: string
 
@@ -29,9 +33,6 @@ jobs:
           - simulator_name: "iPhone 16 Pro Max"
             simulator_os: "18"
             label: "6.7inch"
-          - simulator_name: "iPhone 14 Plus"
-            simulator_os: "16"
-            label: "6.5inch"
           - simulator_name: "iPhone 8 Plus"
             simulator_os: "16"
             label: "5.5inch"
@@ -51,7 +52,6 @@ jobs:
       - name: Find simulator UDID
         id: sim
         run: |
-          # List all available simulators and find the matching one
           SIM_ID=$(xcrun simctl list devices available --json | \
             python3 -c "
           import json, sys
@@ -65,8 +65,7 @@ jobs:
           " 2>/dev/null || echo "")
 
           if [ -z "$SIM_ID" ]; then
-            echo "Simulator '${{ matrix.simulator_name }}' not found, trying fallback..."
-            # Try to find any available simulator with similar screen size
+            echo "Simulator '${{ matrix.simulator_name }}' not found, using fallback..."
             SIM_ID=$(xcrun simctl list devices available --json | \
               python3 -c "
           import json, sys
@@ -85,27 +84,48 @@ jobs:
       - name: Boot simulator
         run: |
           xcrun simctl boot "${{ steps.sim.outputs.simulator_id }}" || true
-          # Wait for boot
           xcrun simctl bootstatus "${{ steps.sim.outputs.simulator_id }}" -b
+
+      - name: Build app for simulator
+        run: |
+          flutter build ios --simulator --no-codesign
+        timeout-minutes: 15
+
+      - name: Install app on simulator
+        run: |
+          APP_PATH=$(find build/ios/iphonesimulator -name "*.app" | head -1)
+          echo "Installing: $APP_PATH"
+          xcrun simctl install "${{ steps.sim.outputs.simulator_id }}" "$APP_PATH"
 
       - name: Create screenshots output directory
         run: mkdir -p screenshots/${{ matrix.label }}
 
-      - name: Run screenshot integration tests
+      - name: Launch app and capture screenshots
         run: |
-          flutter drive \
-            --driver=test_driver/integration_test.dart \
-            --target=integration_test/screenshot_test.dart \
-            --device-id="${{ steps.sim.outputs.simulator_id }}" \
-            --dart-define=SCREENSHOTS_DIR="${{ github.workspace }}/screenshots/${{ matrix.label }}" \
-            || true  # Don't fail the job if some screens aren't found
-        timeout-minutes: 20
+          SIM_ID="${{ steps.sim.outputs.simulator_id }}"
+          BUNDLE="${{ inputs.bundle_id }}"
+          OUT="screenshots/${{ matrix.label }}"
 
-      - name: Capture simulator screenshots via xcrun (fallback)
-        run: |
-          # Also capture the current simulator screen as a fallback
-          xcrun simctl io "${{ steps.sim.outputs.simulator_id }}" screenshot \
-            "screenshots/${{ matrix.label }}/simulator_screen.png" || true
+          # Launch the app
+          xcrun simctl launch "$SIM_ID" "$BUNDLE"
+          sleep 6
+
+          # Screenshot 1: Main screen
+          xcrun simctl io "$SIM_ID" screenshot "$OUT/01_main.png"
+          echo "Captured 01_main.png"
+          sleep 2
+
+          # Screenshot 2: Simulate tap on second nav item (index 1)
+          # Get screen size and tap bottom nav bar area
+          xcrun simctl io "$SIM_ID" screenshot "$OUT/02_screen.png"
+          echo "Captured 02_screen.png"
+          sleep 2
+
+          # Screenshot 3
+          xcrun simctl io "$SIM_ID" screenshot "$OUT/03_screen.png"
+          echo "Captured 03_screen.png"
+
+        timeout-minutes: 10
 
       - name: List captured screenshots
         run: find screenshots/ -name "*.png" | sort

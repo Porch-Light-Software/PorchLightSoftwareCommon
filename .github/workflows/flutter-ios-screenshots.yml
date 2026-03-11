@@ -1,0 +1,142 @@
+name: Take iOS Screenshots (Reusable)
+
+# Runs integration tests on real iOS simulators via GitHub Actions macOS runner.
+# Screenshots are saved as artifacts — download them from the Actions tab
+# and upload directly to App Store Connect.
+#
+# Usage from each app's .github/workflows/screenshots.yml:
+#   uses: Porch-Light-Software/PorchLightSoftwareCommon/.github/workflows/flutter-ios-screenshots.yml@main
+#   with:
+#     app_name: FastTrack
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: 'App display name (FastTrack, MoodTrack, SubTrack)'
+        required: true
+        type: string
+
+jobs:
+  screenshots:
+    name: iOS Screenshots — ${{ inputs.app_name }}
+    runs-on: macos-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - simulator_name: "iPhone 16 Pro Max"
+            simulator_os: "18"
+            label: "6.7inch"
+          - simulator_name: "iPhone 14 Plus"
+            simulator_os: "16"
+            label: "6.5inch"
+          - simulator_name: "iPhone 8 Plus"
+            simulator_os: "16"
+            label: "5.5inch"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Find simulator UDID
+        id: sim
+        run: |
+          # List all available simulators and find the matching one
+          SIM_ID=$(xcrun simctl list devices available --json | \
+            python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          name = '${{ matrix.simulator_name }}'
+          for runtime, devices in data['devices'].items():
+              for d in devices:
+                  if d['name'] == name and d['isAvailable']:
+                      print(d['udid'])
+                      exit()
+          " 2>/dev/null || echo "")
+
+          if [ -z "$SIM_ID" ]; then
+            echo "Simulator '${{ matrix.simulator_name }}' not found, trying fallback..."
+            # Try to find any available simulator with similar screen size
+            SIM_ID=$(xcrun simctl list devices available --json | \
+              python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          for runtime, devices in data['devices'].items():
+              for d in devices:
+                  if 'iPhone' in d['name'] and d['isAvailable']:
+                      print(d['udid'])
+                      exit()
+          ")
+          fi
+
+          echo "simulator_id=$SIM_ID" >> $GITHUB_OUTPUT
+          echo "Using simulator: ${{ matrix.simulator_name }} ($SIM_ID)"
+
+      - name: Boot simulator
+        run: |
+          xcrun simctl boot "${{ steps.sim.outputs.simulator_id }}" || true
+          # Wait for boot
+          xcrun simctl bootstatus "${{ steps.sim.outputs.simulator_id }}" -b
+
+      - name: Create screenshots output directory
+        run: mkdir -p screenshots/${{ matrix.label }}
+
+      - name: Run screenshot integration tests
+        run: |
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/screenshot_test.dart \
+            --device-id="${{ steps.sim.outputs.simulator_id }}" \
+            --dart-define=SCREENSHOTS_DIR="${{ github.workspace }}/screenshots/${{ matrix.label }}" \
+            || true  # Don't fail the job if some screens aren't found
+        timeout-minutes: 10
+
+      - name: Capture simulator screenshots via xcrun (fallback)
+        run: |
+          # Also capture the current simulator screen as a fallback
+          xcrun simctl io "${{ steps.sim.outputs.simulator_id }}" screenshot \
+            "screenshots/${{ matrix.label }}/simulator_screen.png" || true
+
+      - name: List captured screenshots
+        run: find screenshots/ -name "*.png" | sort
+
+      - name: Upload screenshots as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ inputs.app_name }}-${{ matrix.label }}
+          path: screenshots/${{ matrix.label }}/
+          retention-days: 30
+          if-no-files-found: warn
+
+  combine-artifacts:
+    name: Combine all screenshots
+    runs-on: ubuntu-latest
+    needs: screenshots
+    if: always()
+
+    steps:
+      - name: Download all screenshot artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: screenshots-${{ inputs.app_name }}-*
+          merge-multiple: false
+
+      - name: List all downloaded screenshots
+        run: find . -name "*.png" | sort
+
+      - name: Upload combined screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ inputs.app_name }}-ALL
+          path: .
+          retention-days: 30

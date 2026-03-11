@@ -1,0 +1,94 @@
+# SharedFastfile — Porch Light Software
+# Imported by each app's ios/fastlane/Fastfile
+#
+# Required environment variables (set as GitHub org secrets or locally):
+#   APPLE_ID                        - Apple ID email
+#   APPLE_TEAM_ID                   - 10-char Apple Team ID
+#   APP_STORE_CONNECT_API_KEY_ID    - App Store Connect API Key ID
+#   APP_STORE_CONNECT_API_ISSUER_ID - App Store Connect Issuer ID
+#   APP_STORE_CONNECT_API_KEY       - Base64-encoded .p8 key content
+#
+# Per-app secrets (set in each app repo's GitHub secrets):
+#   PROVISIONING_PROFILE_BASE64     - Base64-encoded .mobileprovision
+#   CERTIFICATE_P12_BASE64          - Base64-encoded distribution .p12
+#   CERTIFICATE_PASSWORD            - Password for the .p12
+
+default_platform(:ios)
+
+platform :ios do
+
+  # ------------------------------------------------------------------
+  # Private helpers
+  # ------------------------------------------------------------------
+
+  private_lane :setup_api_key do
+    app_store_connect_api_key(
+      key_id:        ENV["APP_STORE_CONNECT_API_KEY_ID"],
+      issuer_id:     ENV["APP_STORE_CONNECT_API_ISSUER_ID"],
+      key_content:   Base64.decode64(ENV["APP_STORE_CONNECT_API_KEY"] || ""),
+      is_key_content_base64: false
+    )
+  end
+
+  private_lane :install_signing do
+    # Import distribution certificate
+    import_certificate(
+      certificate_path:     "certificate.p12",
+      certificate_password: ENV["CERTIFICATE_PASSWORD"] || "",
+      keychain_name:        "login.keychain"
+    )
+
+    # Install provisioning profile
+    install_provisioning_profile(path: "profile.mobileprovision")
+  end
+
+  private_lane :build_ipa do |options|
+    flutter_root = sh("which flutter", log: false).strip.gsub("/bin/flutter", "")
+
+    # Run flutter build ipa
+    sh(
+      "flutter build ipa --release " \
+      "--export-options-plist=ios/ExportOptions.plist",
+      log: true
+    )
+  end
+
+  # ------------------------------------------------------------------
+  # beta — Build and upload to TestFlight
+  # ------------------------------------------------------------------
+  desc "Build and upload a new beta build to TestFlight"
+  lane :beta do
+    api_key = setup_api_key
+
+    build_ipa
+
+    upload_to_testflight(
+      api_key:           api_key,
+      skip_waiting_for_build_processing: true,
+      changelog:         "New build from CI"
+    )
+
+    UI.success("Beta build uploaded to TestFlight!")
+  end
+
+  # ------------------------------------------------------------------
+  # release — Submit to App Store
+  # ------------------------------------------------------------------
+  desc "Submit a new release to the App Store"
+  lane :release do
+    api_key = setup_api_key
+
+    build_ipa
+
+    upload_to_app_store(
+      api_key:           api_key,
+      skip_screenshots:  true,
+      skip_metadata:     true,
+      submit_for_review: false,  # Set to true when ready
+      force:             true
+    )
+
+    UI.success("Build uploaded to App Store Connect!")
+  end
+
+end

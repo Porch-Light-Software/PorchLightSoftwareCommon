@@ -1,0 +1,90 @@
+name: Flutter iOS Deploy (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      bundle_id:
+        description: 'App bundle identifier (e.g. com.porchlightsoftware.fasttrack)'
+        required: true
+        type: string
+      app_name:
+        description: 'App display name (e.g. FastTrack)'
+        required: true
+        type: string
+      lane:
+        description: 'Fastlane lane to run (beta or release)'
+        required: false
+        type: string
+        default: 'beta'
+    secrets:
+      APPLE_ID:
+        required: true
+      APPLE_TEAM_ID:
+        required: true
+      APP_STORE_CONNECT_API_KEY_ID:
+        required: true
+      APP_STORE_CONNECT_API_ISSUER_ID:
+        required: true
+      APP_STORE_CONNECT_API_KEY:
+        required: true
+      CERTIFICATE_P12_BASE64:
+        required: true
+      CERTIFICATE_PASSWORD:
+        required: true
+      PROVISIONING_PROFILE_BASE64:
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.app_name }} to TestFlight
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout app repo
+        uses: actions/checkout@v4
+
+      - name: Checkout shared repo
+        uses: actions/checkout@v4
+        with:
+          repository: Porch-Light-Software/PorchLightSoftwareCommon
+          path: PorchLightSoftwareCommon
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+          working-directory: ios
+
+      - name: Decode certificate
+        run: |
+          echo "${{ secrets.CERTIFICATE_P12_BASE64 }}" | base64 --decode > ios/certificate.p12
+
+      - name: Decode provisioning profile
+        run: |
+          echo "${{ secrets.PROVISIONING_PROFILE_BASE64 }}" | base64 --decode > ios/profile.mobileprovision
+
+      - name: Run Fastlane ${{ inputs.lane }}
+        working-directory: ios
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: bundle exec fastlane ${{ inputs.lane }}
+
+      - name: Clean up secrets
+        if: always()
+        run: |
+          rm -f ios/certificate.p12
+          rm -f ios/profile.mobileprovision

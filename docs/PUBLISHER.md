@@ -5,10 +5,10 @@
 | Field | Value |
 |-------|-------|
 | **Publisher Name** | Porch Light Software |
-| **Website** | https://porchlightsoftware.com |
-| **Support URL** | https://porchlightsoftware.com/support |
-| **Privacy Policy URL** | https://porchlightsoftware.com/privacy |
-| **Contact Email** | support@porchlightsoftware.com |
+| **Website** | https://porch-light-software.github.io |
+| **Support URL** | https://porch-light-software.github.io/support |
+| **Privacy Policy URL** | https://porch-light-software.github.io/privacy |
+| **Contact Email** | allan@allanborup.dk |
 
 ## Apple Developer Account (fill in after account creation)
 
